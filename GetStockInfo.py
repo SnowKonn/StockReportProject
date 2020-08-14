@@ -7,6 +7,8 @@ from io import StringIO
 from datetime import datetime
 from Package.Data_Base_Method import *
 
+# FIXME: temp library
+import csv
 
 def set_asset_code_name_table(local_db_instance):
     create_table_query = """
@@ -119,6 +121,34 @@ def get_krx_sector_data(date_list):
 
     return result_df
 
+def set_unique_asset_codes_to_local_db(local_db_instance):
+    select_asset_code_sector = 'SELECT days, market_name, asset_code, asset_name FROM krx_sector_data'
+    results = local_db_instance.select_db(select_asset_code_sector)
+    asset_code_df = pd.DataFrame(results, columns=['days', 'market_name', 'asset_code', 'asset_name'])
+    asset_code_df = asset_code_df.sort_values(['asset_code', 'days'], ascending=False)
+    asset_code_unique = asset_code_df.drop_duplicates('asset_code')
+
+    db_columns = ['market', 'asset_code', 'asset_name']
+    df_columns = ['market_name', 'asset_code', 'asset_name']
+
+    asset_code_unique_db_form = asset_code_unique[df_columns].copy()
+    asset_code_unique_db_form.rename(columns={'market_name': 'market'}, inplace=True)
+
+    local_db_instance.insert_non_exist_row_database_multi_rows('asset_codes', db_columns,
+                                                               np.array(asset_code_unique_db_form))
+
+    select_asset_code_sector = 'SELECT days, asset_code, asset_name FROM krx_individual_data'
+    results = local_db_instance.select_db(select_asset_code_sector)
+    asset_code_df = pd.DataFrame(results, columns=['days', 'asset_code', 'asset_name'])
+    asset_code_df = asset_code_df.sort_values(['asset_code', 'days'], ascending=False)
+    asset_code_unique = asset_code_df.drop_duplicates('asset_code')
+
+    db_columns = ['asset_code', 'asset_name']
+    df_columns = ['asset_code', 'asset_name']
+
+    asset_code_unique_db_form = asset_code_unique[df_columns].copy()
+    local_db_instance.insert_non_exist_row_database_multi_rows('asset_codes', db_columns,
+                                                               np.array(asset_code_unique_db_form))
 
 if __name__ == "__main__":
     db_path = 'Data/db_instance.db'
@@ -126,7 +156,7 @@ if __name__ == "__main__":
     set_krx_sector_data_table(local_db_instance)
     set_krx_individual_data_table(local_db_instance)
 
-    load_period_year = 20
+    load_period_year = 0.3
     date_interval = 7 * 12
     loop_n = int(load_period_year * 365 / date_interval)
 
@@ -164,31 +194,26 @@ if __name__ == "__main__":
     # Save the unique asset codes and save the corresponding asset name with the latest company name
     # (ex 동부화재 -> DB화재보험)
     set_asset_code_name_table(local_db_instance)
+    set_unique_asset_codes_to_local_db(local_db_instance)
 
-    select_asset_code_sector = 'SELECT days, market_name, asset_code, asset_name FROM krx_sector_data'
-    results = local_db_instance.select_db(select_asset_code_sector)
-    asset_code_df = pd.DataFrame(results, columns=['days', 'market_name', 'asset_code', 'asset_name'])
-    asset_code_df = asset_code_df.sort_values(['asset_code', 'days'], ascending=False)
-    asset_code_unique = asset_code_df.drop_duplicates('asset_code')
+    # Make the stock ticker form asset code table
+    select_asset_codes = "SELECT market, asset_code from asset_codes"
+    asset_code_lists = local_db_instance.select_db(select_asset_codes)
+    asset_code_df = pd.DataFrame(asset_code_lists, columns=['market', 'asset_code'])
+    asset_code_df['ticker'] = '-'
 
-    db_columns = ['market', 'asset_code', 'asset_name']
-    df_columns = ['market_name', 'asset_code', 'asset_name']
+    for i in range(len(asset_code_df)):
+        market = asset_code_df.loc[i, 'market']
+        asset_code = asset_code_df.loc[i, 'asset_code']
 
-    asset_code_unique_db_form = asset_code_unique[df_columns].copy()
-    asset_code_unique_db_form.rename(columns ={'market_name': 'market'}, inplace=True)
+        if market == '코스닥':
+            asset_code_df.loc[i, 'ticker'] = asset_code + '.KQ'
+        elif market == '코스피':
+            asset_code_df.loc[i, 'ticker'] = asset_code + '.KS'
 
-    local_db_instance.insert_non_exist_row_database_multi_rows('asset_codes', db_columns, np.array(asset_code_unique_db_form))
-
-    select_asset_code_sector = 'SELECT days, asset_code, asset_name FROM krx_individual_data'
-    results = local_db_instance.select_db(select_asset_code_sector)
-    asset_code_df = pd.DataFrame(results, columns=['days', 'asset_code', 'asset_name'])
-    asset_code_df = asset_code_df.sort_values(['asset_code', 'days'], ascending=False)
-    asset_code_unique = asset_code_df.drop_duplicates('asset_code')
-
-    db_columns = ['asset_code', 'asset_name']
-    df_columns = ['asset_code', 'asset_name']
-
-    asset_code_unique_db_form = asset_code_unique[df_columns].copy()
-    local_db_instance.insert_non_exist_row_database_multi_rows('asset_codes', db_columns,
-                                                               np.array(asset_code_unique_db_form))
+    asset_ticker_list = asset_code_df['ticker'].copy()
+    asset_ticker_list = asset_ticker_list.loc[asset_ticker_list != '-']
+    with open('code_ticker.csv', 'w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(asset_ticker_list)
 
