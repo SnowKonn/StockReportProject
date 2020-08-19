@@ -13,6 +13,7 @@ import csv
 def set_asset_code_name_table(local_db_instance):
     create_table_query = """
         CREATE TABLE IF NOT EXISTS asset_codes(
+            
             market text,
             asset_code text PRIMARY KEY,
             asset_name text
@@ -20,6 +21,23 @@ def set_asset_code_name_table(local_db_instance):
     """
 
     local_db_instance.excecute_sql_query(create_table_query)
+
+def set_daily_asset_price_table(local_db_instance):
+    create_table_query = """
+        CREATE TABLE IF NOT EXISTS asset_price(
+            id integer PRIMARY KEY AUTOINCREMENT,
+            days text,
+            asset_code text,
+            open real,
+            close real,
+            high real,
+            low real,
+            volume real
+            )
+    """
+
+    local_db_instance.excecute_sql_query(create_table_query)
+
 
 def set_krx_individual_data_table(local_db_instance):
     create_table_query = """
@@ -213,7 +231,14 @@ if __name__ == "__main__":
 
     asset_ticker_list = asset_code_df['ticker'].copy()
     asset_ticker_list = asset_ticker_list.loc[asset_ticker_list != '-']
-    with open('code_ticker.csv', 'w', newline='') as file:
+    with open('Data/code_ticker.csv', 'w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(asset_ticker_list)
 
+    set_daily_asset_price_table(local_db_instance)
+
+    # stock_prices = pd.read_csv('Data/stock_price.csv')
+    # stock_prices['Date'] = stock_prices['Date'].map(lambda x: ''.join(x.split('-')))
+    # stock_prices['code'] = stock_prices['code'].map(lambda x: (x.split('.'))[0])
+    # stock_prices = stock_prices.rename(columns={'Date':'days', 'code':'asset_code'})
+    # local_db_instance.insert_database_multi_rows('asset_price', stock_prices.columns.tolist(), np.array(stock_prices))
