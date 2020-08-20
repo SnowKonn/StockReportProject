@@ -33,6 +33,25 @@ def get_initial_request_info(local_db_instance):
                            inplace=True)
     request_info_df.to_sql('fs_request_codes', local_db_instance.conn, if_exists='replace')
 
+
+def set_init_fs_table(local_db_instance):
+    create_table_query = """
+        CREATE TABLE IF NOT EXISTS fs_data(
+            hash_id integer PRIMARY KEY,
+            date text,
+            yymm text,
+            fs_year text,
+            fs_month integer,
+            fs_qtr text,
+            main_term text,
+            asset_code text,
+            fs_code text,
+            value real        
+        )
+    """
+    local_db_instance.excecute_sql_query(create_table_query)
+
+
 if __name__ == "__main__":
     initial = False
     db_path = 'Data/db_instance.db'
@@ -112,7 +131,7 @@ if __name__ == "__main__":
         df_tot_list.append(results_df_tot_cleaned)
     del results_df_spac_cleaned, results_df_pref_cleaned, results_df_pref_re_cleaned, results_df_sorted, results_df
 
-    top_rank_thr = 80
+    top_rank_thr = 120
     top_rank_stocks_df_list = []
     for i in range(len(df_tot_list)):
         top_rank_stocks_df_list.append(df_tot_list[i].iloc[:top_rank_thr, 2:6].copy())
@@ -120,8 +139,54 @@ if __name__ == "__main__":
     top_rank_asset_df = pd.concat(top_rank_stocks_df_list, ignore_index=True)
     medicine_idx = top_rank_asset_df['sector_name'].map(lambda x: (x == '의약품') | (x == '제약') | (x == '기타서비스'))
     top_rank_asset_df_exclude_medicine = top_rank_asset_df.loc[~medicine_idx]
-    top_rank_asset_df_exclude_medicine.drop_duplicates(subset='asset_code')
+    top_rank_asset_df_exclude_medicine = top_rank_asset_df_exclude_medicine.drop_duplicates(subset='asset_code').reset_index(drop=True)
+    asset_code_fn_guide = top_rank_asset_df_exclude_medicine['asset_code'].map(lambda x: 'A'+x)
+    print(asset_code_fn_guide)
 
+    print(request_info_codes_list)
 
+    url = 'http://www.fnspace.com/Api/FinanceApi'
+    temp_result_list = []
+    item_chunk = 10
 
+    for i in range(99, len(asset_code_fn_guide)):
 
+        temp_result_df_db_form_list = []
+        for j in range(int(len(request_info_codes_list)/item_chunk)+1):
+            result = requests.get(url, params=dict(
+                key=app_key,
+                format='json',
+                item=','.join(request_info_codes_list[(j*item_chunk): ((j+1)*item_chunk)]),
+                code=asset_code_fn_guide[i],
+                consolgb='M',
+                fraccyear='2001',
+                toaccyear='2020',
+                annualgb='QQ',
+                accdategb='C'
+            ))
+            temp_result_list.append(result.text)
+
+            temp_result_df = pd.read_json(result.text)
+            response_results_df = pd.DataFrame(temp_result_df['dataset'][0]['DATA'])
+            response_results_df['asset_code'] = temp_result_df['dataset'][0]['CODE'].split('A')[1]
+            regex = re.compile(r'^M[0-9]{6}')
+            item_index = response_results_df.columns.map(lambda x: True if regex.match(x) else False)
+            item_list = response_results_df.columns[item_index].tolist()
+            id_vars_list = response_results_df.columns[~pd.Series(item_index.to_list())].tolist()
+            fin_result_df_db_form = pd.melt(response_results_df, id_vars=id_vars_list, value_vars=item_list, value_name='value', var_name='fs_code')
+            temp_result_df_db_form_list.append(fin_result_df_db_form.copy())
+
+        db_form_df = pd.concat(temp_result_df_db_form_list, axis=0).reset_index(drop=True)
+        hash_dict = {}
+        for k in range(len(db_form_df)):
+            temp_data_list = db_form_df.iloc[k,:]
+            temp_data_list = temp_data_list.map(lambda x: str(x))
+            temp_concat_data = ''.join(temp_data_list)
+            temp_hash_value = hash(temp_concat_data)
+            hash_dict[k] = temp_hash_value
+
+        db_hash_key = pd.DataFrame([hash_dict]).T
+
+        db_form_df['hash_id'] = db_hash_key
+        print(db_form_df)
+        local_db_instance.insert_non_exist_row_database_multi_rows('fs_data', db_form_df.columns.tolist(), np.array(db_form_df))
